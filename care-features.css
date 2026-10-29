@@ -1,0 +1,30 @@
+.care-product-form h3,.care-reactions h3{margin:18px 0 6px;font-size:18px}
+.care-inline-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.care-inline-actions button,.care-detail-button,.care-frequency-button,.care-reaction-shortcut{min-height:40px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--purple);padding:7px 10px;font-size:12px;font-weight:600;line-height:1.25;cursor:pointer}
+.care-inline-actions button.selected{background:var(--purple);color:#fff}
+.care-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.care-card-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:8px}
+.care-form-grid .field,.care-product-controls .field{min-width:0}
+.care-form-grid input,.care-product-controls select{width:100%;min-width:0}
+.care-check,.care-day{display:flex;align-items:center;gap:8px;min-height:40px}
+.care-check input,.care-day input{flex:none}
+.care-product-controls{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:8px 0 18px}
+.care-product-controls .care-count{margin:0;color:var(--muted);font-size:12px}
+.care-expiry-badge,.care-preference-note{padding:9px 11px;border-radius:12px;background:#f6ece6;color:#744f42;font-size:12px;line-height:1.4}
+.care-soft-note{color:var(--muted);font-size:11px}
+.care-basket-total{font-size:13px;color:var(--ink);font-weight:600}
+.care-reaction-line{border-top:1px solid var(--line);padding:9px 0;font-size:12px}
+#careProfileButton{min-height:40px}
+.care-reminder[hidden],.care-preference-note[hidden],#careTransferNotice[hidden]{display:none}
+.care-frequency-button{grid-column:1/-1;justify-self:end}
+.product-card[hidden]{display:none!important}
+.routine-step .care-reaction-shortcut{font-size:10px;min-height:34px}
+@media(max-width:700px){
+  .top{flex-wrap:wrap}
+  #careProfileButton{min-height:42px}
+  .care-form-grid{grid-template-columns:minmax(0,1fr)}
+  .care-product-controls{display:grid;grid-template-columns:minmax(0,1fr)}
+  .care-inline-actions button,.care-detail-button,.care-frequency-button{min-height:44px}
+  .product-actions .care-detail-button{font-size:10px;padding:6px 4px}
+  .routine-step .care-reaction-shortcut{grid-column:2/-1;justify-self:start}
+}

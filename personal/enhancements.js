@@ -31,7 +31,7 @@
   }
   async function chooseSsdProductPhoto(id) {
     const input=document.createElement('input');input.type='file';input.accept='image/*';input.setAttribute('capture','environment');
-    input.addEventListener('change',async()=>{const file=input.files?.[0];if(!file)return;try{if(typeof compressPhoto!=='function')throw new Error('PHOTO_COMPRESSION_UNAVAILABLE');productPhotos[id]=await compressPhoto(file);localStorage.removeItem('moyuhod-me:ssd-photo:'+id);write('photos',productPhotos);renderAll();toast('Фото сохранено и синхронизируется после согласия');}catch(error){toast(error.message==='PHOTO_COMPRESSION_UNAVAILABLE'?'Не удалось подготовить фото для сохранения.':'Не удалось сохранить фото в библиотеку.');}});
+    input.addEventListener('change',async()=>{const file=input.files?.[0];if(!file)return;try{if(typeof compressPhoto!=='function')throw new Error('PHOTO_COMPRESSION_UNAVAILABLE');productPhotos[id]=await compressPhoto(file);localStorage.removeItem('moyuhod-me:ssd-photo:'+id);write('photos',productPhotos);renderAll();toast(document.documentElement.dataset.cloud === 'off' ? 'Фото сохранено в этом браузере' : 'Фото сохранено и синхронизируется после согласия');}catch(error){toast(error.message==='PHOTO_COMPRESSION_UNAVAILABLE'?'Не удалось подготовить фото для сохранения.':'Не удалось сохранить фото в библиотеку.');}});
     input.click();
   }
   async function restoreSsdPhoto(img) {
@@ -80,7 +80,6 @@
     panel.append(title, text, controls);
     const tabs = $('.assistant-tabs', assistant);
     if (tabs) assistant.insertBefore(panel, tabs);
-    document.querySelectorAll('.nav [data-view="journal"],.mobile-nav [data-view="journal"]').forEach(button => button.remove());
   }
 
   function updateAssistantNotice() {
@@ -100,10 +99,14 @@
     const routine = document.createElement('textarea'); routine.value = profile.preferences || ''; routine.placeholder = 'Удобное время, ограничения, привычки';
     const body = document.createElement('p'); body.className = 'privacy-note'; body.textContent = 'Профиль сохраняется в этом браузере. Добавки учитываются как инвентарь; дозировки приложение не назначает.';
     wrap.append(field('Тип кожи', skin), field('Цели ухода', goals), field('Подтверждённые чувствительности и ограничения', sensitivities), field('Волосы и кожа головы', hair), field('Предпочтения и привычки', routine), body);
+    const ingredients = node('button', 'Любимые и нежелательные ингредиенты', 'secondary');
+    ingredients.type = 'button';
+    ingredients.addEventListener('click', () => window.CareFeatures?.openPreferences());
+    wrap.append(ingredients);
     const onboarding = node('button', 'Открыть пошаговую настройку', 'secondary'); onboarding.type = 'button'; onboarding.addEventListener('click', openOnboarding);
     const cancel = node('button', 'Закрыть', 'secondary'); cancel.addEventListener('click', closeModal);
     const save = node('button', 'Сохранить профиль', 'primary'); save.addEventListener('click', () => {
-      profile = { skin: skin.value, goals: goals.value.trim(), sensitivities: sensitivities.value.trim(), hair: hair.value.trim(), preferences: routine.value.trim(), updatedAt: new Date().toISOString() };
+      profile = { ...safeRead('profile', {}), skin: skin.value, goals: goals.value.trim(), sensitivities: sensitivities.value.trim(), hair: hair.value.trim(), preferences: routine.value.trim(), updatedAt: new Date().toISOString() };
       localStorage.setItem('moyuhod-me:profile', JSON.stringify(profile)); closeModal(); toast('Профиль сохранён');
     });
     openModal('Твой профиль', wrap, [onboarding, cancel, save]);
@@ -240,14 +243,19 @@
     if (retinol && retinal && retinol.days?.some(d => retinal.days?.includes(d))) rules.push('Требует внимания: Retinol Shot и Retinal Shot стоят в один день. В личном плане их нужно оставлять в разные вечера; проверь расписание.');
     if (bha && [retinol, retinal].filter(Boolean).some(step => step.days?.some(d => bha.days?.includes(d)))) rules.push('Требует внимания: вечер COSRX BHA совпадает с вечером ретиноида. Разнеси эти шаги по разным дням.');
     if (foreo && [retinol, retinal].filter(Boolean).some(step => step.days?.some(d => foreo.days?.includes(d)))) rules.push('Требует внимания: FOREO BEAR 2 совпадает по дню с ретиноидным уходом. Оставь отдельный день и следуй инструкции прибора.');
-    const missing = products.filter(p => ['Использую','Куплено','Заканчивается'].includes(p.status) && !p.inci).length;
+    const missing = products.filter(p => ['Использую','Куплено','Заканчивается'].includes(p.status) && !p.inciVerified).length;
     if (missing) rules.push('Не хватает данных: у ' + missing + ' средств не внесён подтверждённый INCI. Поэтому составной аудит по ним невозможен.');
     const plannedInRoutine = steps.filter(s => { const p = products.find(x => x.id === s.productId); return p && (p.status === 'В планах' || p.status === 'Отложено' || p.status === 'Закончилось') && !s.productArchived; });
     if (plannedInRoutine.length) rules.push('Требует внимания: в расписании есть шаги со средствами не из активного наличия (' + plannedInRoutine.map(s => s.name).join('; ') + ').');
     if (!rules.length) rules.push('Подходит по внесённым данным: явных совпадений отмеченных правил расписания не найдено. Это проверка структуры и подтверждённых тобой правил, не оценка медицинской пригодности.');
     const routineProducts = [...new Set(steps.filter(s=>!s.productArchived).flatMap(s=>s.productIds?.length?s.productIds:(s.productId?[s.productId]:[])))].map(id=>products.find(p=>p.id===id)).filter(Boolean);
-    const insufficient = routineProducts.filter(p=>!p.inci || !p.instructions);
+    const insufficient = routineProducts.filter(p=>!p.inciVerified || !p.instructions);
     if (insufficient.length) rules.push('Не хватает данных для разбора состава или инструкции: '+insufficient.map(p=>p.name).join('; ')+'. INCI и применение не домысливаются.');
+    const confirmed = routineProducts.filter(p=>p.inci && p.inciVerified);
+    if (confirmed.length) rules.push('Подтверждённые составы в плане: ' + confirmed.map(p => {
+      const groups = window.CareFeatures?.groupsFor(p.inci) || [];
+      return p.name + ' (' + (groups.length ? groups.join(', ') : 'совпадений в кратком справочнике нет') + ')';
+    }).join('; ') + '.');
     rules.forEach(text => wrap.append(node('p', text, 'audit-line')));
     wrap.append(node('p', 'Проверка не ставит диагнозы, не предсказывает высыпания и не утверждает причинность. Неподтверждённый состав помечается как неизвестный.', 'privacy-note'));
     const close = node('button', 'Закрыть', 'secondary'); close.addEventListener('click', closeModal);
@@ -286,7 +294,7 @@
     }
     const close = node('button', 'Закрыть', 'secondary'); close.addEventListener('click', closeModal);
     const save = node('button', 'Сохранить карточку', 'primary'); save.addEventListener('click', () => {
-      product.brand = brand.value.trim(); product.variant = variant.value.trim(); product.size = size.value.trim(); product.description = description.value.trim(); product.instructions = instructions.value.trim(); product.restrictions = restrictions.value.trim(); product.inci = inci.value.trim(); product.inciSource = source.value.trim(); product.inciCheckedAt = checked.value;
+      product.brand = brand.value.trim(); product.variant = variant.value.trim(); product.size = size.value.trim(); product.description = description.value.trim(); product.instructions = instructions.value.trim(); product.restrictions = restrictions.value.trim(); if (product.inci !== inci.value.trim()) product.inciVerified = false; product.inci = inci.value.trim(); product.inciSource = source.value.trim(); product.inciCheckedAt = checked.value;
       if (product.id === 'foreo') { const days=foreoDayInputs.filter(input=>input.checked).map(input=>Number(input.value)); if(!days.length){toast('Выбери хотя бы один день по графику FOREO');return;} const step=steps.find(item=>item.productId==='foreo'&&!item.productArchived);if(step){step.days=days;write('steps',steps);} }
       write('products', products); write('archive', archivedProducts); closeModal(); renderAll(); toast('Карточка средства обновлена');
     });
@@ -471,9 +479,9 @@
     if (window.MoyUhodConsent) return;
     const wrap=node('div','','note-form');
     wrap.append(node('p','Косметичка, дневник, фотографии и отметки хранятся в браузере этого устройства. Синхронизация между устройствами не настроена. Для переноса данных используй резервную копию.'));
-    wrap.append(node('p','Облачный помощник выключен. Сообщение и выбранные данные отправятся внешнему сервису только после настройки HTTPS-посредника, двух отдельных согласий и подтверждения каждой отправки. Отказ не ограничивает библиотеку, расписание и дневник.'));
+    wrap.append(node('p','Веб-поиск помощника выключен. Сообщение и выбранные данные отправятся внешнему сервису только после настройки HTTPS-посредника, двух отдельных согласий и подтверждения каждой отправки. Отказ не ограничивает библиотеку, расписание и дневник.'));
     wrap.append(node('p','Тексты согласий и обработка по применимой юрисдикции требуют юридической проверки перед публичным запуском.'));
-    const close=node('button','Продолжить без облачного ИИ','primary');close.addEventListener('click',()=>{localStorage.setItem('moyuhod-me:privacy-intro-v1','1');closeModal()});
+    const close=node('button','Продолжить','primary');close.addEventListener('click',()=>{localStorage.setItem('moyuhod-me:privacy-intro-v1','1');closeModal()});
     openModal('О данных и помощнике',wrap,[close]);
   }
 

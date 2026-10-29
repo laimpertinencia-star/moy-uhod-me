@@ -33,8 +33,11 @@
     const body = document.createElement('div'); body.className = 'consent-onboarding';
     const intro = document.createElement('p');
     const personal = document.documentElement.dataset.appMode === 'personal';
+    const cloudEnabled = personal && document.documentElement.dataset.cloud !== 'off';
     intro.textContent = personal
-      ? 'Косметичка, расписание, дневник и отметки сохраняются в браузере и могут синхронизироваться через защищённое облако личной версии. Фото карточек также передаются в облако для синхронизации и не отправляются помощнику.'
+      ? cloudEnabled
+        ? 'Косметичка, расписание, дневник и отметки сохраняются в браузере и могут синхронизироваться через защищённое облако личной версии. Фото карточек также передаются в облако для синхронизации и не отправляются помощнику.'
+        : 'Данные хранятся в этом браузере. Чтобы перенести их на другое устройство, сохрани резервную копию и восстанови её там. Фото карточек не отправляются помощнику.'
       : 'Косметичка, расписание, дневник и отметки сохраняются только в хранилище браузера на этом устройстве. Синхронизации между устройствами нет. Фото продукта не отправляются помощнику.';
     const policy = document.createElement('p');
     policy.append(safeLink('Согласие на обработку', `${LEGAL_BASE}consent.html`), document.createTextNode(' · '), safeLink('Политика обработки данных', `${LEGAL_BASE}privacy.html`), document.createTextNode(' · '), safeLink('Правила тестового приложения', `${LEGAL_BASE}terms.html`));
@@ -46,7 +49,7 @@
     note.textContent = 'Два последних согласия необязательны и по умолчанию выключены. Их можно отозвать в настройках помощника. Не вводи медицинские документы, адрес, телефон и другие данные, которые не нужны для ухода.';
     const warning = document.createElement('p'); warning.className = 'privacy-note';
     warning.textContent = 'Перед публичным тестированием оператору нужно заполнить реквизиты и контактные данные в политике. Не вводи данные до заполнения помеченных полей.';
-    if (personal) body.append(intro, policy, local.label, cloud.label, external.label, context.label, note, warning);
+    if (personal) body.append(intro, policy, local.label, ...(cloudEnabled ? [cloud.label] : []), external.label, context.label, note, warning);
     else body.append(intro, policy, local.label, external.label, context.label, note, warning);
     title.textContent = firstRun ? 'Перед началом' : 'Согласия и приватность';
     content.replaceChildren(body);
@@ -73,7 +76,7 @@
       if (!local.input.checked) return;
       const now = new Date().toISOString();
       const previous = read('consentRecord') || {};
-      write('consentRecord', { localStorage: true, cloudSync: personal && cloud.input.checked, noticeVersion: VERSION, acceptedAt: previous.acceptedAt || now, updatedAt: now });
+      write('consentRecord', { localStorage: true, cloudSync: cloudEnabled && cloud.input.checked, noticeVersion: VERSION, acceptedAt: previous.acceptedAt || now, updatedAt: now });
       write('privacy-intro-v1', '1');
       write('assistantConsent', { external: external.input.checked, context: external.input.checked && context.input.checked, noticeVersion: VERSION, updatedAt: now });
       const privacy = read('privacy') || {};
@@ -89,6 +92,9 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     const previous = read('consentRecord') || {};
+    if (document.documentElement.dataset.appMode === 'personal' && document.documentElement.dataset.cloud === 'off' && previous.cloudSync) {
+      write('consentRecord', { ...previous, cloudSync: false });
+    }
     const firstRun = !previous.localStorage;
     if (firstRun) open({ firstRun: true });
     else if (document.documentElement.dataset.appMode === 'personal' && previous.noticeVersion !== VERSION) open({ firstRun: false });
