@@ -304,31 +304,36 @@
   function openBasketFrom(source, prefillId = '') {
     const wrap = node('div', '', 'note-form');
     const mode = selectControl([['manual','Ввести вручную'],['library','Выбрать из библиотеки'],['archive','Выбрать из архива']], source || 'manual');
+    const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Поиск по бренду или названию';
     const product = selectControl([['','Выбери средство из библиотеки']], '');
     const name = document.createElement('input'); name.placeholder = 'Название будущей покупки';
     const category = selectControl([['','Выбери зону'],...Object.entries(CATS).filter(([key]) => key !== 'general').map(([key, item]) => [key,item.label])], '');
     const replaces = selectControl([['','Не заменяет конкретное средство'],...products.map(p=>[p.id,p.name])], prefillId);
     const note = document.createElement('textarea'); note.placeholder = 'Почему рассматриваешь, что проверить';
-    const productField = field('Выбери средство', product), nameField = field('Название', name);
+    const productField = field('Выбери средство', product), nameField = field('Название', name), searchField = field('Найти средство', search);
     const ingredientWarning = node('p', '', 'care-preference-note'); ingredientWarning.hidden = true;
     const fillOptions = () => {
       const list = mode.value === 'archive' ? archivedProducts : products;
       const selectedId = product.value;
-      product.replaceChildren(new Option('Выбери средство из библиотеки',''),...list.map(p => { const option = document.createElement('option'); option.value=p.id; option.textContent=p.name; return option; }));
+      const query = search.value.trim().toLocaleLowerCase('ru');
+      product.replaceChildren(new Option('Выбери средство из библиотеки',''),...list.filter(p => !query ||
+        (p.name + ' ' + (p.brand || '')).toLocaleLowerCase('ru').includes(query))
+        .map(p => { const option = document.createElement('option'); option.value=p.id; option.textContent=p.name; return option; }));
       product.value = selectedId;
       const picked = mode.value === 'manual' ? null : list.find(p=>p.id===product.value);
       if (picked) { product.value=picked.id; name.value=picked.name; category.value=picked.category||''; }
       else { product.value=''; if(mode.value!=='manual')name.value=''; }
-      productField.hidden = mode.value === 'manual'; nameField.hidden = mode.value !== 'manual';
+      productField.hidden = searchField.hidden = mode.value === 'manual'; nameField.hidden = mode.value !== 'manual';
       const avoided = picked?.inciVerified && picked.inci
         ? (window.CareFeatures?.preferenceMatches(picked.inci).avoided || []) : [];
       ingredientWarning.hidden = !avoided.length;
       ingredientWarning.textContent = avoided.length
         ? 'В подтверждённом составе есть отмеченное как нежелательное: ' + avoided.join(', ') : '';
     };
-    mode.addEventListener('change', fillOptions); product.addEventListener('change', fillOptions); fillOptions();
+    mode.addEventListener('change', () => { search.value = ''; product.value = ''; name.value = ''; category.value = ''; fillOptions(); });
+    search.addEventListener('input', fillOptions); product.addEventListener('change', fillOptions); fillOptions();
     const scan = node('button','Сканировать название и добавить результат','secondary'); scan.type='button'; scan.addEventListener('click',()=>{ closeModal(); sessionStorage.setItem('moyuhod-me:basket-scan','1'); document.querySelector('[data-assistant-tab="scanner"]')?.click(); go('assistant'); document.getElementById('scanProductImage')?.click(); });
-    wrap.append(field('Источник',mode),productField,nameField,field('Зона',category),field('Что заменить',replaces),field('Заметка',note),ingredientWarning,scan);
+    wrap.append(field('Источник',mode),searchField,productField,nameField,field('Зона',category),field('Что заменить',replaces),field('Заметка',note),ingredientWarning,scan);
     const cancel=node('button','Отмена','secondary'); cancel.addEventListener('click',closeModal);
     const save=node('button','Добавить в корзину','primary'); save.addEventListener('click',()=>{
       const selected=(mode.value==='manual'?null:(mode.value==='archive'?archivedProducts:products).find(p=>p.id===product.value));
