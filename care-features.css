@@ -14,6 +14,8 @@
 .care-soft-note{color:var(--muted);font-size:11px}
 .care-basket-total{font-size:13px;color:var(--ink);font-weight:600}
 .care-reaction-line{border-top:1px solid var(--line);padding:9px 0;font-size:12px}
+.care-context-button{min-height:40px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--purple);padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer}
+.step-edit .care-context-button{display:block;margin-top:5px;max-width:100%;white-space:normal;text-align:left}
 #careProfileButton{min-height:40px}
 .care-reminder[hidden],.care-preference-note[hidden],#careTransferNotice[hidden]{display:none}
 .care-frequency-button{grid-column:1/-1;justify-self:end}
@@ -25,6 +27,7 @@
   .care-form-grid{grid-template-columns:minmax(0,1fr)}
   .care-product-controls{display:grid;grid-template-columns:minmax(0,1fr)}
   .care-inline-actions button,.care-detail-button,.care-frequency-button{min-height:44px}
+  .care-context-button{min-height:44px}
   .product-actions .care-detail-button{font-size:10px;padding:6px 4px}
   .routine-step .care-reaction-shortcut{grid-column:2/-1;justify-self:start}
 }

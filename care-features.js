@@ -157,9 +157,9 @@
     const save = button('Сохранить', () => { applyProductData(p, values()); closeModal(); toast('Данные средства сохранены'); }, 'primary');
     openModal(p.name, wrap, [cancel, save]);
   }
-  function openReaction(p) {
+  function openReaction(p, dateValue = today()) {
     const wrap = element('div', '', 'note-form');
-    const date = input('date', today());
+    const date = input('date', dateValue);
     const rating = select([['good', 'Хорошо'], ['mild', 'Лёгкий дискомфорт'], ['irritation', 'Раздражение'], ['stopped', 'Прекращено использование']], '');
     const area = input('text'); area.placeholder = 'Зона, если важно';
     const note = document.createElement('textarea'); note.placeholder = 'Что замечено без предположений о причине';
@@ -481,8 +481,72 @@
     }, 'primary')]);
   }
   const originalRenderRoutine = renderRoutineManager;
+  let friendRoutineUndo = null;
+  function friendMoveDialog(step, time) {
+    const group = step.group || CATS[step.category]?.label || 'Общее';
+    const wrap = element('div', '', 'note-form');
+    const scope = select([['step', 'Этот шаг'], ['group', 'Весь блок «' + group + '»']], 'step');
+    const action = select([['move', 'Перенести — убрать из исходного дня'], ['copy', 'Скопировать — оставить в исходном дне']], 'move');
+    const day = select([['1', 'Понедельник'], ['2', 'Вторник'], ['3', 'Среда'], ['4', 'Четверг'],
+      ['5', 'Пятница'], ['6', 'Суббота'], ['0', 'Воскресенье']], String((routineDay + 1) % 7));
+    const period = select([['am', 'Утро'], ['pm', 'Вечер']], time);
+    const info = element('p', '', 'privacy-note');
+    const update = () => {
+      const source = stepsFor('all', time, routineDay).filter(item =>
+        scope.value === 'step' ? item.id === step.id : (item.group || CATS[item.category]?.label || 'Общее') === group);
+      info.textContent = 'Источник: ' + ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'][routineDay] +
+        ' · ' + (time === 'am' ? 'утро' : 'вечер') + ' · ' + group + ' · ' + source.length + ' шаг(ов). ' +
+        (action.value === 'move' ? 'Исходные шаги будут убраны.' : 'Исходные шаги останутся.');
+    };
+    [scope, action, day, period].forEach(control => control.addEventListener('change', update)); update();
+    wrap.append(info, field('Что изменить', scope), field('Действие', action), field('Целевой день', day), field('Целевой период', period));
+    openModal('Перенос расписания', wrap, [button('Отмена', closeModal), button('Подтвердить', () => {
+      const targetDay = Number(day.value), targetTime = period.value;
+      if (targetDay === routineDay && targetTime === time) { toast('Выбери другой день или период'); return; }
+      const source = stepsFor('all', time, routineDay).filter(item =>
+        scope.value === 'step' ? item.id === step.id : (item.group || CATS[item.category]?.label || 'Общее') === group);
+      const duplicates = source.filter(item => steps.some(other => !source.some(s => s.id === other.id) &&
+        other.time === targetTime && other.name === item.name && other.productId === item.productId &&
+        (!other.days?.length || other.days.includes(targetDay))));
+      if (duplicates.length) { toast('В целевом дне уже есть такой шаг'); return; }
+      friendRoutineUndo = steps.map(item => ({ ...item, days: item.days?.slice() }));
+      const selected = new Set(source.map(item => item.id));
+      const updated = [];
+      steps.forEach(item => {
+        if (!selected.has(item.id)) { updated.push(item); return; }
+        const days = item.days?.length ? item.days.slice() : [0, 1, 2, 3, 4, 5, 6];
+        if (action.value === 'copy') updated.push(item);
+        else {
+          const remaining = days.filter(value => value !== routineDay);
+          if (remaining.length) updated.push({ ...item, days: remaining });
+        }
+        updated.push({ ...item, id: 'step-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+          days: [targetDay], time: targetTime });
+      });
+      steps = updated; write('steps', steps); closeModal(); renderAll(); toast('Расписание обновлено; действие можно отменить');
+    }, 'primary')]);
+  }
   renderRoutineManager = function() {
     originalRenderRoutine();
+    if (!personal) {
+      $('#view-routine .routine-block-mover')?.remove();
+      const cards = [...document.querySelectorAll('#routineManager .routine-card')];
+      cards.forEach((card, index) => {
+        const time = index ? 'pm' : 'am';
+        const visible = stepsFor(routineCat, time, routineDay);
+        card.querySelectorAll('.step-edit').forEach((row, position) => {
+          const step = visible[position];
+          if (step) $('.step-name', row)?.append(button('Перенос / копия', () => friendMoveDialog(step, time), 'care-context-button'));
+        });
+      });
+      if (friendRoutineUndo && !$('#careUndoRoutine')) {
+        const undo = button('Отменить перенос', () => {
+          steps = friendRoutineUndo; friendRoutineUndo = null; write('steps', steps); renderAll(); toast('Перенос отменён');
+        }, 'care-context-button');
+        undo.id = 'careUndoRoutine'; $('#view-routine .section-head')?.append(undo);
+      }
+      if (!friendRoutineUndo) $('#careUndoRoutine')?.remove();
+    } else $('#view-routine .routine-block-mover')?.remove();
     $('#routineManager')?.querySelectorAll('.step-edit').forEach(row => {
       const title = $('.step-name strong', row)?.textContent;
       const step = steps.find(item => item.name === title);
@@ -548,6 +612,27 @@
     if (duplicates.length) wrap.append(element('p', 'Похоже на дубли: ' + duplicates.join('; '), 'privacy-note'));
     wrap.append(element('p', 'Это проверка внесённых данных. Она не ставит диагноз и не заменяет инструкции средств.', 'privacy-note'));
     openModal('Проверка плана', wrap, [button('Закрыть', closeModal)]);
+  }
+  if (personal) {
+    const priorUsageHistory = renderUsageHistory;
+    renderUsageHistory = function() {
+      priorUsageHistory();
+      const cutoff = addDays(today(), 1 - Number(historyWindow || 30));
+      const entries = usageHistory.filter(event => event.date >= cutoff &&
+        (historyProduct === 'all' || (event.productIds || []).includes(historyProduct)))
+        .slice().sort((a, b) => (b.changedAt || b.date).localeCompare(a.changedAt || a.date));
+      document.querySelectorAll('#usageHistoryList .journal-entry').forEach((card, index) => {
+        const event = entries[index]; if (!event) return;
+        (event.productIds || []).forEach(id => {
+          const p = productById(id); if (!p) return;
+          (p.reactions || []).filter(reaction => reaction.date === event.date).forEach(reaction => {
+            card.append(element('p', 'Наблюдение · ' + p.name + ' · ' + reaction.rating +
+              (reaction.area ? ' · ' + reaction.area : '') + (reaction.note ? ' · ' + reaction.note : ''), 'care-reaction-line'));
+          });
+          card.append(button('Добавить реакцию · ' + p.name, () => openReaction(p, event.date), 'care-reaction-shortcut'));
+        });
+      });
+    };
   }
   const priorRenderJournal = renderJournal;
   renderJournal = function() {
@@ -659,6 +744,85 @@
       link.download = 'moy-uhod-week.ics'; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
       closeModal(); toast('Календарь скачан');
     }, 'primary')]);
+  }
+  // The shared, empty-start version needs the same four basket entry paths as
+  // the personal version. Keep the scan result editable before it is saved.
+  if (!personal) {
+    openAddBasketItem = function(prefillId = '', initialMode = 'manual') {
+      const wrap = element('div', '', 'note-form');
+      const mode = select([['manual', 'Ввести вручную'], ['library', 'Выбрать из библиотеки'],
+        ['archive', 'Выбрать из архива'], ['ocr', 'Сканировать название']], initialMode);
+      const search = input('search'); search.placeholder = 'Поиск по бренду или названию';
+      const choice = select([['', 'Выбери средство']], '');
+      const name = input('text'); name.placeholder = 'Название будущей покупки';
+      const category = select([['', 'Выбери зону'], ...Object.entries(CATS)
+        .filter(([key]) => key !== 'general').map(([key, value]) => [key, value.label])], '');
+      const replaces = select([['', 'Не заменяет конкретное средство'],
+        ...products.filter(p => p.status !== 'Архив').map(p => [p.id, p.name])], prefillId);
+      const note = document.createElement('textarea'); note.placeholder = 'Почему рассматриваешь, что проверить';
+      const warning = element('p', '', 'care-preference-note'); warning.hidden = true;
+      const list = () => products.filter(p => mode.value === 'archive' ? p.status === 'Архив' : p.status !== 'Архив');
+      const picked = () => list().find(p => p.id === choice.value);
+      const updateWarning = () => {
+        const p = picked();
+        const avoided = confirmedInci(p) ? preferenceMatches(p.inci).avoided : [];
+        warning.hidden = !avoided.length;
+        warning.textContent = avoided.length ? 'В подтверждённом составе есть отмеченное как нежелательное: ' + avoided.join(', ') : '';
+      };
+      const fill = () => {
+        const previous = choice.value;
+        const query = normalized(search.value.trim());
+        choice.replaceChildren(new Option('Выбери средство', ''),
+          ...list().filter(p => normalized(p.name).includes(query) || normalized(p.brand).includes(query))
+            .map(p => new Option(p.name, p.id)));
+        choice.value = [...choice.options].some(o => o.value === previous) ? previous : '';
+        const p = picked();
+        if (p) { name.value = p.name; category.value = p.category || ''; }
+        searchField.hidden = choiceField.hidden = !['library', 'archive'].includes(mode.value);
+        scan.hidden = mode.value !== 'ocr';
+        nameField.hidden = ['library', 'archive'].includes(mode.value);
+        updateWarning();
+      };
+      const searchField = field('Найти средство', search), choiceField = field('Средство', choice);
+      const nameField = field('Название', name);
+      const scan = button('Открыть камеру или выбрать фото', () => {
+        closeModal(); sessionStorage.setItem('moyuhod:basket-scan', '1');
+        go('assistant'); $('[data-assistant-tab="scanner"]')?.click(); $('#scanProductImage')?.click();
+      });
+      mode.addEventListener('change', () => { search.value = ''; choice.value = ''; name.value = ''; category.value = ''; fill(); });
+      search.addEventListener('input', fill);
+      choice.addEventListener('change', fill);
+      fill();
+      wrap.append(field('Источник', mode), searchField, choiceField, nameField,
+        field('Зона', category), field('Что заменить', replaces), field('Заметка', note), warning, scan);
+      openModal('Будущая покупка', wrap, [button('Отмена', closeModal), button('Добавить в корзину', () => {
+        const p = ['library', 'archive'].includes(mode.value) ? picked() : null;
+        const itemName = (p?.name || name.value).trim();
+        if (!itemName || !category.value) { (!itemName ? (p ? choice : name) : category).focus(); toast('Укажи название и зону'); return; }
+        if (basket.some(item => normalized(item.name) === normalized(itemName) && (item.replacesId || '') === replaces.value)) {
+          toast('Такая покупка уже есть в корзине'); return;
+        }
+        basket.push({ id: 'b-' + Date.now(), name: itemName, brand: p?.brand || '',
+          category: p?.category || category.value, replacesId: replaces.value, status: 'В планах',
+          note: note.value.trim(), sourceProductId: p?.id || null, source: mode.value,
+          inci: confirmedInci(p) ? p.inci : '', inciVerified: confirmedInci(p) });
+        write('basket', basket); closeModal(); renderBasket(); toast('Добавлено в корзину');
+      }, 'primary')]);
+    };
+    const scanSave = $('#saveScannedProduct');
+    if (scanSave && !$('#saveScannedToBasket')) {
+      const add = button('Добавить распознанное в корзину', () => {
+        const name = $('#scanProductName')?.value.trim();
+        const category = $('#scanProductCategory')?.value;
+        if (!name || !category) { (!name ? $('#scanProductName') : $('#scanProductCategory'))?.focus(); toast('Проверь название и зону'); return; }
+        if (basket.some(item => normalized(item.name) === normalized(name))) { toast('Такая покупка уже есть в корзине'); return; }
+        basket.push({ id: 'b-' + Date.now(), name, category, status: 'В планах',
+          note: 'Добавлено после распознавания. Название проверено пользователем.', source: 'ocr' });
+        write('basket', basket); sessionStorage.removeItem('moyuhod:basket-scan'); renderAll(); go('basket');
+        toast('Добавлено в корзину');
+      });
+      add.id = 'saveScannedToBasket'; scanSave.after(add);
+    }
   }
   function installButtons() {
     if (!personal && !$('#careProfileButton')) {
