@@ -455,8 +455,22 @@
     const avoided = document.createElement('textarea'); avoided.value = (current.avoided || []).join(', ');
     const hints = element('datalist'); hints.id = 'careIngredientHints';
     rules.flatMap(rule => rule.terms).forEach(term => hints.append(new Option(term)));
+    const suggestion = input('text');
+    suggestion.setAttribute('list', hints.id);
+    suggestion.placeholder = 'Начни вводить, например Retinol';
+    const addSuggestion = target => {
+      const value = suggestion.value.trim();
+      if (!value) return;
+      target.value = [target.value.trim(), value].filter(Boolean).join(', ');
+      suggestion.value = '';
+      suggestion.focus();
+    };
+    const suggestionActions = element('div', '', 'care-inline-actions');
+    suggestionActions.append(button('В любимые', () => addSuggestion(loved)),
+      button('В избегаю', () => addSuggestion(avoided)));
     wrap.append(element('p', 'Укажи ингредиенты через запятую. Совпадения показываются как личные пометки, без оценки безопасности.', 'privacy-note'),
-      field('Любимые', loved), field('Не подходят / избегаю', avoided), hints,
+      field('Любимые', loved), field('Не подходят / избегаю', avoided),
+      field('Подсказки из словаря INCI', suggestion), hints, suggestionActions,
       element('p', 'Примеры: ' + rules.map(rule => rule.terms[0]).join(', '), 'privacy-note'));
     openModal('Мои ингредиенты', wrap, [button('Отмена', closeModal), button('Сохранить', () => {
       const parse = value => value.split(/[,\n;]+/).map(text => text.trim()).filter(Boolean);
