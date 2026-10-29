@@ -434,7 +434,47 @@ function getAccentScheduleAdjustments(){const past=[],seen=new Set();for(let off
 function effectiveHomeSteps(time,day){const list=stepsFor('all',time,day);if(selectedRoutineDate<dateKey)return list;const plan=getAccentScheduleAdjustments();plan.assignments.filter(item=>item.targetDate===selectedRoutineDate&&item.step.time===time).forEach(item=>{const existing=list.findIndex(s=>s.id===item.step.id);const moved={...item.step,_rescheduledFrom:item.sourceDate};if(existing>=0)list[existing]=moved;else{const sourceIndex=steps.indexOf(item.step),insertAt=list.findIndex(s=>steps.indexOf(s)>sourceIndex);list.splice(insertAt<0?list.length:insertAt,0,moved)}});const seenVitamins=new Set();return list.filter(step=>{if(accentType(step)!=='vitamin')return true;const id=step.productId||step.id;if(seenVitamins.has(id))return false;seenVitamins.add(id);return true})}
 function renderRoutineAutoNotice(plan=getAccentScheduleAdjustments()){const el=document.getElementById('routineAutoNotice');if(!el)return;const messages=[];if(selectedRoutineDate>=dateKey){plan.assignments.forEach(item=>{if(!item.targetDate)return;const targetLabel=new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long'}).format(new Date(item.targetDate+'T12:00:00')),sourceLabel=new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long'}).format(new Date(item.sourceDate+'T12:00:00'));if(item.targetDate===selectedRoutineDate)messages.push(`Перенесено с ${sourceLabel}: ${item.step.name}. В этот день шаг учтён один раз.`);else if(selectedRoutineDate===dateKey)messages.push(`Неотмеченный шаг «${item.step.name}» перенесён на ${targetLabel} с учётом интервалов расписания.`)});plan.assignments.filter(item=>!item.targetDate).forEach(item=>messages.push(`Для шага «${item.step.name}» пока не найдено совместимое окно в расписании; он не будет добавлен к конфликтующей процедуре.`));if(selectedRoutineDate===dateKey)plan.vitamins.forEach(item=>messages.push(`Витаминный шаг «${item.step.name}» за прошлый день не отмечен; дополнительный приём не назначен, следующий остаётся по обычному графику.`))}el.textContent=messages.join(' ');el.hidden=!messages.length}
 function latestUsage(stepId,date=dateKey){return usageHistory.slice().reverse().find(event=>event.stepId===stepId&&event.date===date)}
-function recordRoutineStep(step,checked,date=selectedRoutineDate){const key=date+':'+step.id;if(!checked){checks[key]=false;usageHistory.push({id:'usage-'+Date.now(),date,period:step.time,stepId:step.id,productIds:latestUsage(step.id,date)?.productIds||[],status:'undone',changedAt:new Date().toISOString()});write('checks',checks);write('usageHistory',usageHistory);renderAll();return}const choices=(step.productIds||[]).map(id=>products.find(p=>p.id===id)).filter(Boolean);const save=ids=>{checks[key]=true;usageHistory.push({id:'usage-'+Date.now(),date,period:step.time,stepId:step.id,productIds:ids,status:'done',changedAt:new Date().toISOString()});write('checks',checks);write('usageHistory',usageHistory);renderAll()};if(choices.length>1){const wrap=document.createElement('div');wrap.className='note-form';const hint=document.createElement('p');hint.className='privacy-note';hint.textContent='Отметка сохранится с конкретным продуктом — это поможет восстановить рутину за прошлый день.';const select=selectControl(choices.map(p=>[p.id,p.name]),choices[0].id);wrap.append(hint,formField('Какие средства использованы?',select));const cancel=document.createElement('button');cancel.className='secondary';cancel.textContent='Назад';cancel.addEventListener('click',()=>{closeModal();renderAll()});const confirmUse=document.createElement('button');confirmUse.className='primary';confirmUse.textContent='Сохранить отметку';confirmUse.addEventListener('click',()=>{closeModal();save([select.value])});openModal('Уточни средство',wrap,[cancel,confirmUse]);return}save(choices.length?[choices[0].id]:step.productId?[step.productId]:[])}
+function recordRoutineStep(step, checked, date = selectedRoutineDate) {
+  const key = date + ':' + step.id;
+  const record = (ids, status) => {
+    checks[key] = status === 'done';
+    usageHistory.push({id:'usage-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
+      date, period:step.time, stepId:step.id, productIds:ids, status, changedAt:new Date().toISOString()});
+    write('checks', checks); write('usageHistory', usageHistory); renderAll();
+  };
+  if (!checked) { record(latestUsage(step.id, date)?.productIds || [], 'undone'); return; }
+  const choices = (step.productIds || []).map(id => products.find(p => p.id === id)).filter(Boolean);
+  if (choices.length > 1) {
+    const wrap = document.createElement('div'); wrap.className = 'note-form';
+    const hint = document.createElement('p'); hint.className = 'privacy-note';
+    hint.textContent = step.allowMultipleProducts
+      ? 'Отметь все действительно использованные средства. Выбор сохранится в истории этой даты.'
+      : 'Выбери одно действительно использованное средство. Выбор сохранится в истории этой даты.';
+    wrap.append(hint);
+    let selected;
+    if (step.allowMultipleProducts) {
+      const boxes = choices.map(p => {
+        const label = document.createElement('label'); label.className = 'care-check';
+        const box = document.createElement('input'); box.type = 'checkbox'; box.value = p.id;
+        label.append(box, document.createTextNode(p.name)); wrap.append(label); return box;
+      });
+      selected = () => boxes.filter(box => box.checked).map(box => box.value);
+    } else {
+      const choice = selectControl(choices.map(p => [p.id,p.name]), choices[0].id);
+      wrap.append(formField('Какое средство использовано?', choice));
+      selected = () => [choice.value];
+    }
+    const cancel = document.createElement('button'); cancel.className = 'secondary'; cancel.textContent = 'Назад';
+    cancel.addEventListener('click', () => { closeModal(); renderAll(); });
+    const confirmUse = document.createElement('button'); confirmUse.className = 'primary'; confirmUse.textContent = 'Сохранить отметку';
+    confirmUse.addEventListener('click', () => {
+      const ids = selected(); if (!ids.length) { toast('Выбери использованное средство'); return; }
+      closeModal(); record(ids, 'done');
+    });
+    openModal('Уточни средство', wrap, [cancel, confirmUse]); return;
+  }
+  record(choices.length ? [choices[0].id] : step.productId ? [step.productId] : [], 'done');
+}
 function renderHomeWeekPicker(){const root=document.getElementById('homeWeekPicker');if(!root)return;root.replaceChildren();const today=new Date(),monday=new Date(today);monday.setHours(12,0,0,0);monday.setDate(monday.getDate()-((monday.getDay()+6)%7));const labels=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];labels.forEach((label,index)=>{const date=new Date(monday);date.setDate(monday.getDate()+index);const key=localDate(date),day=date.getDay(),button=document.createElement('button');button.type='button';button.className='home-week-day'+(key===selectedRoutineDate?' active':'')+(key===dateKey?' is-today':'');button.setAttribute('aria-pressed',String(key===selectedRoutineDate));button.setAttribute('aria-label',`${label}, ${date.toLocaleDateString('ru-RU',{day:'numeric',month:'long'})}${key===dateKey?' — сегодня':''}`);const name=document.createElement('span');name.textContent=label;const number=document.createElement('strong');number.textContent=String(date.getDate());button.append(name,number);button.addEventListener('click',()=>{selectedRoutineDate=key;routineDay=day;renderHomeRoutines()});root.append(button)});const chosen=new Date(selectedRoutineDate+'T12:00:00');const label=document.getElementById('homeRoutineDateLabel');if(label)label.textContent=selectedRoutineDate===dateKey?'Сегодня · можно отмечать в течение дня':`${new Intl.DateTimeFormat('ru-RU',{weekday:'long',day:'numeric',month:'long'}).format(chosen)} · отметки сохраняются отдельно`;const heroTitle=document.querySelector('#view-home .welcome h2');if(heroTitle)heroTitle.textContent=selectedRoutineDate===dateKey?'Уход на сегодня':`Уход · ${new Intl.DateTimeFormat('ru-RU',{weekday:'short',day:'numeric',month:'short'}).format(chosen)}`}
 function renderHomeRoutines(){
  renderHomeWeekPicker();const selectedDay=new Date(selectedRoutineDate+'T12:00:00').getDay(),adjustmentPlan=getAccentScheduleAdjustments();renderRoutineAutoNotice(adjustmentPlan);
