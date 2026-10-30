@@ -8,38 +8,6 @@
   let consentHistory = safeRead('consentHistory', []);
   let aiConfig = safeRead('assistantConfig', {});
   let chosenTheme = safeRead('theme', 'plum');
-  let photoDirectory = null;
-  const photoUrls = new Map();
-
-  function photoDb() {
-    return new Promise((resolve,reject)=>{const request=indexedDB.open('moyuhod-ssd-photo-access',1);request.onupgradeneeded=()=>request.result.createObjectStore('folders');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
-  }
-  async function getPhotoFolder() {
-    const db=await photoDb();return new Promise((resolve,reject)=>{const tx=db.transaction('folders','readonly'),request=tx.objectStore('folders').get('product-folder');request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error);});
-  }
-  async function savePhotoFolder(handle) {
-    const db=await photoDb();return new Promise((resolve,reject)=>{const tx=db.transaction('folders','readwrite');tx.objectStore('folders').put(handle,'product-folder');tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});
-  }
-  async function ensurePhotoFolder() {
-    if(!window.isSecureContext||!window.showDirectoryPicker)throw new Error('SSD_FOLDER_API_UNAVAILABLE');
-    let folder=photoDirectory||await getPhotoFolder();
-    if(!folder)folder=await window.showDirectoryPicker({id:'moyuhod-ssd-products',mode:'readwrite'});
-    let permission=await folder.queryPermission({mode:'readwrite'});
-    if(permission!=='granted')permission=await folder.requestPermission({mode:'readwrite'});
-    if(permission!=='granted')throw new Error('SSD_FOLDER_PERMISSION_DENIED');
-    photoDirectory=folder;await savePhotoFolder(folder);return folder;
-  }
-  async function chooseSsdProductPhoto(id) {
-    const input=document.createElement('input');input.type='file';input.accept='image/*';input.setAttribute('capture','environment');
-    input.addEventListener('change',async()=>{const file=input.files?.[0];if(!file)return;try{if(typeof compressPhoto!=='function')throw new Error('PHOTO_COMPRESSION_UNAVAILABLE');productPhotos[id]=await compressPhoto(file);localStorage.removeItem('moyuhod-me:ssd-photo:'+id);write('photos',productPhotos);renderAll();toast(document.documentElement.dataset.cloud === 'off' ? 'Фото сохранено в этом браузере' : 'Фото сохранено и синхронизируется после согласия');}catch(error){toast(error.message==='PHOTO_COMPRESSION_UNAVAILABLE'?'Не удалось подготовить фото для сохранения.':'Не удалось сохранить фото в библиотеку.');}});
-    input.click();
-  }
-  async function restoreSsdPhoto(img) {
-    const id=img.dataset.productId,filename=id&&localStorage.getItem('moyuhod-me:ssd-photo:'+id);if(!filename||img.dataset.ssdFilename===filename)return;
-    try{const folder=photoDirectory||await getPhotoFolder();if(!folder)return;const permission=await folder.queryPermission({mode:'read'});if(permission!=='granted')return;const handle=await folder.getFileHandle(filename);const file=await handle.getFile();const url=URL.createObjectURL(file);const old=photoUrls.get(id);if(old)URL.revokeObjectURL(old);photoUrls.set(id,url);img.dataset.ssdFilename=filename;img.src=url;}catch{}
-  }
-  new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(added=>{if(added.nodeType!==1)return;if(added.matches?.('img[data-product-id]'))restoreSsdPhoto(added);added.querySelectorAll?.('img[data-product-id]').forEach(restoreSsdPhoto);}))).observe(document.documentElement,{childList:true,subtree:true});
-
   function applyTheme(theme = chosenTheme) {
     chosenTheme = theme;
     document.documentElement.dataset.theme = theme;
@@ -457,10 +425,8 @@
       const wrap=node('div','','note-form');wrap.append(node('p','Проверено файлов: '+entries.length+'. Доступны: '+ok+'. Отсутствуют: '+missing.length+'.'));
       localStorage.setItem('moyuhod-me:photoAudit',JSON.stringify({checkedAt:new Date().toISOString(),checked:entries.length,available:ok,missing}));
       wrap.append(node('p',missing.length?'Требуют загрузки: '+missing.join(', '):'Все подключённые файлы фотокарточек доступны.','privacy-note'));
-      wrap.append(node('p','Файлы продуктов подключены из папки проекта на SSD. Новые фотографии можно сохранять в выбранную папку SSD; если браузер не поддерживает прямой доступ, приложение не сохранит их в своём хранилище.','privacy-note'));
-      const choose=node('button','Выбрать папку фотографий на SSD','primary');choose.addEventListener('click',async()=>{try{await ensurePhotoFolder();closeModal();toast('Папка SSD подключена для фотографий');}catch{toast('Открой приложение в Chrome на Mac через localhost и выбери папку проекта на SSD.');}});
-      const migrate=node('button',`Сохранить копию ${Object.keys(productPhotos).length} фото на SSD`,'secondary');migrate.disabled=!Object.keys(productPhotos).length;migrate.addEventListener('click',async()=>{try{const folder=await ensurePhotoFolder();let moved=0;for(const [id,data] of Object.entries(productPhotos)){if(typeof data!=='string'||!data.startsWith('data:image/'))continue;const blob=await (await fetch(data)).blob();const extension=blob.type==='image/png'?'png':blob.type==='image/webp'?'webp':'jpg';const filename='photo-'+id+'.'+extension;const handle=await folder.getFileHandle(filename,{create:true});const writable=await handle.createWritable();await writable.write(blob);await writable.close();localStorage.setItem('moyuhod-me:ssd-photo:'+id,filename);moved++;}write('photos',productPhotos);closeModal();renderAll();toast(`Копий фото на SSD: ${moved}`);}catch{toast('Не удалось перенести фото. Исходные копии оставлены в этом браузере.');}});
-      const close=node('button','Закрыть','secondary');close.addEventListener('click',closeModal);openModal('Проверка фотокарточек',wrap,[migrate,close,choose]);
+      wrap.append(node('p','Свои фото сохраняются в браузере этого устройства. При выборе снимка откроется системная галерея; приложение получит только выбранный файл. Чтобы сохранить копию отдельно от браузера, используй экспорт данных.','privacy-note'));
+      const close=node('button','Закрыть','secondary');close.addEventListener('click',closeModal);openModal('Проверка фотокарточек',wrap,[close]);
     });
   }
 
@@ -479,7 +445,7 @@
         event.preventDefault();event.stopImmediatePropagation();const title=$('h3',action.closest('.product-card'))?.textContent;const product=products.find(p=>p.name===title);openBasketFrom('manual',product?.id||'');
       }
     },true);
-    document.addEventListener('click',event=>{const photo=event.target.closest('.photo-action');if(photo){event.preventDefault();event.stopImmediatePropagation();const title=$('h3',photo.closest('.product-card'))?.textContent;const product=products.find(p=>p.name===title)||archivedProducts.find(p=>p.name===title);if(product)chooseSsdProductPhoto(product.id);}},true);
+    document.addEventListener('click',event=>{const photo=event.target.closest('.photo-action');if(photo){event.preventDefault();event.stopImmediatePropagation();const title=$('h3',photo.closest('.product-card'))?.textContent;const product=products.find(p=>p.name===title)||archivedProducts.find(p=>p.name===title);if(product)chooseProductPhoto(product.id);}},true);
   }
 
   function observeRoutine() {
@@ -809,7 +775,6 @@
 
   function bootstrap() {
     reorderHomeForRoutineFirst();
-    window.chooseProductPhoto = chooseSsdProductPhoto;
     applyTheme();addHeaderActions();addSettingsPanel();enableRoutineEditor();addHistoryInputs();addPhotoControls();bindProductDetails();bindBasketSources();connectAiChat();observeRoutine();installStyles();
     const refresh=()=>{addHistoryInputs();installRoutineContextActions();};
     document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>setTimeout(refresh,0)));
