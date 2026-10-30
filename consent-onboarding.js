@@ -1,7 +1,7 @@
 (() => {
   const PREFIX = document.documentElement.dataset.storagePrefix || 'moyuhod';
   const KEY = `${PREFIX}:consentRecord`;
-  const VERSION = '3.0';
+  const VERSION = '4.0';
   const LEGAL_BASE = document.documentElement.dataset.legalBase || './';
   const style = document.createElement('style');
   style.textContent = `.modal-backdrop{z-index:9999!important}.consent-onboarding{display:grid;gap:12px;max-height:min(68vh,620px);overflow:auto;padding:2px}.consent-onboarding>p{margin:0;line-height:1.5}.consent-onboarding a,.consent-settings-link{color:var(--purple);font-weight:600}.consent-row{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface,#fff);line-height:1.45;cursor:pointer}.consent-row input{flex:0 0 18px;width:18px;height:18px;margin:2px 0 0;accent-color:var(--purple)}.modal-actions button:disabled{opacity:.45;cursor:not-allowed}.consent-settings-link{border:0;background:transparent;padding:0;font:inherit;cursor:pointer}`;
@@ -43,8 +43,9 @@
     policy.append(safeLink('Согласие на обработку', `${LEGAL_BASE}consent.html`), document.createTextNode(' · '), safeLink('Политика обработки данных', `${LEGAL_BASE}privacy.html`), document.createTextNode(' · '), safeLink('Правила тестового приложения', `${LEGAL_BASE}terms.html`));
     const local = row('Подтверждаю ознакомление с уведомлением и даю согласие на обработку данных, добавляемых в приложение для хранения косметички, рутины и заметок на этом устройстве.', !!oldRecord.localStorage, true);
     const cloud = row('Для личной версии: разрешаю хранить и синхронизировать список средств, корзину будущих покупок, рутину, отметки, дневник и фотографии карточек в закрытом облаке, чтобы пользоваться ими на моих устройствах. Ответы анкеты и история помощника не синхронизируются.', !!oldRecord.cloudSync);
-    const external = row('Разрешаю отправлять текст моего отдельного вопроса через сервер приложения в OpenAI для ответа с веб-поиском. Каждый вопрос будет подтверждаться отдельно.', !!oldAssistant.external);
-    const context = row('Разрешаю добавлять к вопросу только подходящие данные из моей косметички и рутины. Без этой отметки отправляется только текст вопроса.', !!oldAssistant.context);
+    const newProvider = oldAssistant.provider === 'cloudflare-workers-ai' && oldAssistant.noticeVersion === VERSION;
+    const external = row('Разрешаю отправлять отдельно подтверждённые вопросы в Cloudflare Workers AI для ответа по данным косметички и справочнику. Живого интернет-поиска нет.', newProvider && !!oldAssistant.external);
+    const context = row('Разрешаю добавлять к вопросу относящиеся к нему данные косметички, профиля, корзины и рутины. Фото не отправляются. Без этой отметки отправляется только текст вопроса.', newProvider && !!oldAssistant.context);
     const note = document.createElement('p'); note.className = 'privacy-note';
     note.textContent = 'Два последних согласия необязательны и по умолчанию выключены. Их можно отозвать в настройках помощника. Не вводи медицинские документы, адрес, телефон и другие данные, которые не нужны для ухода.';
     const warning = document.createElement('p'); warning.className = 'privacy-note';
@@ -78,7 +79,7 @@
       const previous = read('consentRecord') || {};
       write('consentRecord', { localStorage: true, cloudSync: cloudEnabled && cloud.input.checked, noticeVersion: VERSION, acceptedAt: previous.acceptedAt || now, updatedAt: now });
       write('privacy-intro-v1', '1');
-      write('assistantConsent', { external: external.input.checked, context: external.input.checked && context.input.checked, noticeVersion: VERSION, updatedAt: now });
+      write('assistantConsent', { provider: 'cloudflare-workers-ai', external: external.input.checked, context: external.input.checked && context.input.checked, noticeVersion: VERSION, updatedAt: now });
       const privacy = read('privacy') || {};
       write('privacy', { ...privacy, localStorageConsent: true, aiConsent: external.input.checked, healthConsent: external.input.checked && context.input.checked, updatedAt: now, noticeVersion: VERSION });
       backdrop.classList.remove('open'); delete backdrop.dataset.consentModal; setInert(false);
@@ -97,7 +98,7 @@
     }
     const firstRun = !previous.localStorage;
     if (firstRun) open({ firstRun: true });
-    else if (document.documentElement.dataset.appMode === 'personal' && previous.noticeVersion !== VERSION) open({ firstRun: false });
+    else if (previous.noticeVersion !== VERSION) open({ firstRun: false });
     window.MoyUhodConsent = { open: () => open({ firstRun: false }) };
     const settings = document.createElement('button');
     settings.type = 'button'; settings.className = 'consent-settings-link'; settings.textContent = 'Согласия и данные';
