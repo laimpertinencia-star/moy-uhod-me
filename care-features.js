@@ -102,7 +102,6 @@
     });
     const photo = input('file');
     photo.accept = 'image/*';
-    photo.setAttribute('capture', 'environment');
     photo.hidden = true;
     photo.addEventListener('change', async () => {
       const file = photo.files?.[0];
