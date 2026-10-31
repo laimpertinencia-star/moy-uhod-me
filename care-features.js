@@ -151,6 +151,7 @@
     history.append(element('h3', 'История переносимости'));
     (p.reactions || []).slice().reverse().forEach(reaction => history.append(element('p',
       reaction.date + ' · ' + reaction.rating + (reaction.area ? ' · ' + reaction.area : '') + (reaction.note ? ' · ' + reaction.note : ''))));
+    if (p.reactionPause?.active) history.append(element('p', 'Средство временно убрано из плана после отметки о реакции.', 'privacy-note'), button('Возобновить в плане', () => resumeReaction(p)));
     wrap.append(history, button('Добавить наблюдение', () => openReaction(p)));
     const cancel = button('Закрыть', closeModal);
     const save = button('Сохранить', () => { applyProductData(p, values()); closeModal(); toast('Данные средства сохранены'); }, 'primary');
@@ -162,20 +163,29 @@
     const rating = select([['good', 'Хорошо'], ['mild', 'Лёгкий дискомфорт'], ['irritation', 'Раздражение'], ['stopped', 'Прекращено использование']], '');
     const area = input('text'); area.placeholder = 'Зона, если важно';
     const note = document.createElement('textarea'); note.placeholder = 'Что замечено без предположений о причине';
-    const guidance = element('p', 'Если раздражение сохраняется или усиливается — прекрати средство и обратись к врачу.', 'privacy-note');
+    const guidance = element('p', 'При негативной реакции средство будет убрано из ближайшей рутины. При раздражении также временно скроются активные процедуры для этой зоны. Это не определяет причину реакции. Если симптомы сильные или сохраняются, обратись к врачу.', 'privacy-note');
     guidance.hidden = true;
-    rating.addEventListener('change', () => { guidance.hidden = rating.value !== 'irritation'; });
+    rating.addEventListener('change', () => { guidance.hidden = !['mild','irritation','stopped'].includes(rating.value); });
     wrap.append(field('Дата', date), field('Оценка', rating), field('Зона', area), field('Заметка', note), guidance);
     openModal('Наблюдение · ' + p.name, wrap, [button('Отмена', closeModal),
       button('Сохранить', () => {
         p.reactions ||= [];
         p.reactions.push({ id: 'r-' + Date.now(), date: date.value || today(), rating: rating.selectedOptions[0].text,
           area: area.value.trim(), note: note.value.trim() });
+        if (['mild','irritation','stopped'].includes(rating.value)) p.reactionPause = {
+          active: true, level: rating.value, since: new Date().toISOString(), reactionDate: date.value || today()
+        };
         write('products', products);
         if (personal) write('archive', archivedProducts);
-        closeModal(); renderAll(); toast('Наблюдение сохранено');
-        if (rating.value === 'irritation') window.alert('Если раздражение сохраняется или усиливается — прекрати средство и обратись к врачу.');
+        closeModal(); renderAll(); toast(p.reactionPause?.active ? 'Реакция учтена: план ухода обновлён' : 'Наблюдение сохранено');
       }, 'primary')]);
+  }
+  function resumeReaction(p) {
+    if (!p.reactionPause?.active) return;
+    if (!window.confirm('Вернуть «' + p.name + '» в будущий план? Убедись, что реакция прошла, и сверь применение с инструкцией.')) return;
+    p.reactionPause = { ...p.reactionPause, active: false, resumedAt: new Date().toISOString() };
+    write('products', products); if (personal) write('archive', archivedProducts);
+    closeModal(); renderAll(); toast('Средство возвращено в план');
   }
   function showLowBasket(p) {
     const wrap = element('div', '', 'note-form');
@@ -324,6 +334,15 @@
       const p = step && productById(step.productId);
       if (p && !$('.care-reaction-shortcut', row)) row.append(button('Реакция', () => openReaction(p), 'care-reaction-shortcut'));
     });
+    const paused = products.filter(p => p.reactionPause?.active);
+    let reactionNotice = $('#careReactionNotice');
+    if (!reactionNotice) { reactionNotice = element('div', '', 'assistant-notice care-reaction-notice'); reactionNotice.id = 'careReactionNotice'; home.querySelector('.routine-columns')?.before(reactionNotice); }
+    reactionNotice.hidden = !paused.length;
+    if (paused.length) {
+      reactionNotice.replaceChildren(element('strong', 'План скорректирован после реакции'));
+      reactionNotice.append(element('p', 'Временно скрыты: ' + paused.map(p => p.name).join(', ') + '. При раздражении скрыты также активные процедуры той же зоны. Причина реакции не установлена; верни шаги только после оценки состояния.'));
+      paused.forEach(p => reactionNotice.append(button('Пересмотреть · ' + p.name, () => openProductData(p))));
+    }
   };
   function lastCompleted(step, beforeDate) {
     return Object.keys(checks).filter(key => key.endsWith(':' + step.id) && checks[key] && key.slice(0, 10) < beforeDate)

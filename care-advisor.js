@@ -27,6 +27,13 @@
   const namedProduct = (query, products) => products
     .filter(product => norm(product.name).length > 5 && norm(query).includes(norm(product.name)))
     .sort((a, b) => b.name.length - a.name.length)[0];
+  const identifiableProduct = (query, products) => {
+    const exact = namedProduct(query, products);
+    if (exact) return exact;
+    const words = norm(query).split(' ').filter(word => word.length > 3 && !/^(найди|замену|заменить|средство|подбери|похожий|похожую)$/.test(word));
+    const scores = products.map(product => ({ product, score: words.reduce((count, word) => count + (norm(product.name).split(' ').includes(word) ? 1 : 0), 0) })).sort((a, b) => b.score - a.score);
+    return scores[0]?.score > 0 && scores[0].score > (scores[1]?.score ?? 0) ? scores[0].product : null;
+  };
   const missing = product => !verifiedInci(product) ? 'состав не подтверждён' : 'состав внесён и подтверждён пользователем';
   const productLine = product => `${product.name} (${product.status || 'статус не указан'}; ${missing(product)})`;
   const profileLine = profile => {
@@ -85,10 +92,67 @@
     });
     return `Заменяем: ${productLine(current)}. ${profileLine(ctx.profile)}.\nКандидаты из твоих данных:\n${notes.join('\n')}\n\nЗамена не означает одинаковое действие: проверь цель, полный состав, инструкцию и переносимость. Я не добавляю кандидата в ежедневный план до твоего выбора.${isActive(current) ? ` Для ретиноидов особенно важна инструкция и переносимость. Источник: ${source.retinoid}` : ''}`;
   };
+  const productGroups = [
+    [/румян|blush/i, /румян|blush/i, 'blush'],
+    [/сыворот|serum|бустер/i, /сыворот|serum|бустер|ампул/i, 'serum'],
+    [/bb.?крем|bb.?cream/i, /bb.?крем|bb.?cr[eè]me|bb.?cream/i, 'bb cream'],
+    [/консилер|concealer/i, /консилер|concealer/i, 'concealer'],
+    [/крем|cream|лосьон|lotion/i, /крем|cream|лосьон|lotion/i, 'cream'],
+    [/шампун|shampoo/i, /шампун|shampoo/i, 'shampoo'],
+    [/тонер|тоник|toner/i, /тонер|тоник|toner/i, 'toner'],
+    [/маск|mask/i, /маск|mask/i, 'mask'],
+    [/тушь|mascara/i, /тушь|mascara/i, 'mascara'],
+    [/помад|lipstick/i, /помад|lipstick/i, 'lipstick'],
+    [/spf|солнцезащ/i, /spf|солнцезащ/i, 'sunscreen'],
+    [/гель|gel/i, /гель|gel/i, 'gel'],
+    [/пилинг|peeling|скраб/i, /пилинг|peeling|скраб/i, 'peeling'],
+    [/дезодорант|deodorant/i, /дезодорант|deodorant/i, 'deodorant'],
+    [/прибор|foreo|bear/i, /прибор|foreo|bear/i, 'device'],
+    [/витамин|добавк|коллаген/i, /витамин|добавк|коллаген/i, 'supplement'],
+  ];
+  const catalogQuery = (query, ctx) => {
+    if (!/замен|вместо|аналог|подоб|похож/i.test(query) && !(ctx.history||[]).some(item=>item.role==='user'&&/замен|вместо|аналог/i.test(item.text||''))) return '';
+    const recent = (ctx.history||[]).filter(item=>item.role==='user').slice(-5).reverse().map(item=>item.text||'');
+    const focus = [query,...recent].find(text=>productGroups.some(([pattern])=>pattern.test(text)))||query;
+    const group = productGroups.find(([pattern])=>pattern.test(focus));
+    if (group && !['device','supplement'].includes(group[2])) return group[2];
+    const named = identifiableProduct(focus,ctx.products||[]);
+    if (!named) return '';
+    const matched = productGroups.find(([,pattern,term])=>!['device','supplement'].includes(term)&&pattern.test(`${named.name} ${named.kind||''}`));
+    return matched?.[2] || {moisturizer:'cream',serum:'serum',cleanser:'cleanser',shampoo:'shampoo'}[roleOf(named)] || '';
+  };
+  const replaceProduct = (query, ctx) => {
+    const active = ctx.products.filter(product => available.has(product.status));
+    const history = (ctx.history || []).filter(item => item.role === 'user').map(item => item.text || '');
+    const earlier = history.length > 1 ? history.slice(0, -1).reverse() : [];
+    const focus = [query, ...earlier].find(value => productGroups.some(([pattern]) => pattern.test(value)) || namedProduct(value, active)) || query;
+    const named = identifiableProduct(focus, active);
+    const group = productGroups.find(([pattern]) => pattern.test(focus));
+    const matched = named ? [named] : group ? active.filter(product => group[1].test(`${product.name} ${product.kind || ''}`)) : [];
+    if (!matched.length) return `В библиотеке этого браузера я не нашла средство, которое можно уверенно определить по запросу «${query.trim().slice(0, 90)}». Назови его или добавь карточку; профиль и покупки с другого телефона здесь появятся только после переноса данных.`;
+    if (matched.length > 1) return `В библиотеке несколько подходящих средств: ${matched.slice(0, 8).map(product => product.name).join('; ')}. Укажи, какое именно заменяем, и я сравню его с имеющимися вариантами и корзиной.`;
+    const current = matched[0];
+    const planned = ctx.basket.filter(item => item.replacesId === current.id || (item.category === current.category && group?.[1].test(`${item.name} ${item.kind || ''}`)));
+    const shade = current.shade || /оттенок\s*(?:№|#)?\s*([\p{L}\p{N}-]+)/iu.exec(current.kind || '')?.[1];
+    const knownShade = shade && !/^не$/i.test(shade) ? shade : null;
+    const colorQuestion = /цвет|оттенок|такой же|близкий|похож/i.test(query);
+    const need = colorQuestion || /румян|blush|консилер|bb.?крем/i.test(`${current.name} ${current.kind || ''}`)
+      ? knownShade ? `В карточке указан оттенок ${knownShade}; совпадение с другим средством нужно сверить по номеру или свотчу.` : 'В карточке нет точного оттенка. Для близкой по цвету замены добавь номер оттенка или свотч при дневном свете.'
+      : 'Для точной замены укажи, какую задачу должно выполнять новое средство, и проверь его состав и инструкцию.';
+    const options = planned.length ? `В корзине есть варианты: ${planned.slice(0, 5).map(item => item.name).join(', ')}. Их ещё нужно сравнить; покупка не подтверждена.` : 'В корзине пока нет подтверждённого варианта на замену.';
+    return `Сейчас у тебя ${productLine(current)}.${current.reactionPause?.active?' После отметки о реакции средство временно убрано из плана.':''} ${options} ${need} Я не стану придумывать товар или обещать одинаковый результат без данных о конкретном кандидате.`;
+  };
+  const reactionAdvice = ctx => {
+    const paused = ctx.products.filter(product => product.reactionPause?.active);
+    if (!paused.length) return 'В этом браузере нет средств, приостановленных после реакции. Добавь наблюдение через кнопку «Реакция» у конкретного продукта в рутине или карточке; тогда ближайший план обновится. Наблюдение само по себе не устанавливает причину симптомов.';
+    return `В плане сейчас приостановлены: ${paused.map(product=>product.name).join(', ')}. При раздражении активные процедуры той же зоны также временно скрыты. Проверь журнал применения и инструкцию; запись не доказывает, какое средство вызвало реакцию. Если симптомы выражены или сохраняются, обратись к медицинскому специалисту. Источник: ${source.test}`;
+  };
   const todayRoutine = ctx => {
     const date = ctx.date || new Date();
     const day = date.getDay();
-    const today = ctx.steps.filter(step => (!step.days?.length || step.days.includes(day)) && (!step.productId || available.has(stepProduct(step, ctx.products)?.status)));
+    const paused = new Set(ctx.products.filter(product => product.reactionPause?.active).map(product => product.id));
+    const heldZones = new Set(ctx.products.filter(product => product.reactionPause?.active && ['irritation','stopped'].includes(product.reactionPause.level)).map(product => ['makeup','devices'].includes(product.category)?'face':product.category));
+    const today = ctx.steps.filter(step => {const product=stepProduct(step,ctx.products);const zone=['makeup','devices'].includes(step.category)?'face':step.category;return (!step.days?.length || step.days.includes(day)) && (!step.productId || available.has(product?.status)) && !paused.has(step.productId) && !(heldZones.has(zone) && (isActive(product||{}) || /retinol|retinal|ретинол|ретиналь|bha|aha|кислот|пилинг|foreo|микроток/i.test(step.name||'')));});
     if (!today.length) {
       const base = ctx.products.filter(product => available.has(product.status) && ['am', 'pm', 'both'].includes(product.routineTime) && roleOf(product) !== 'other' && !isActive(product));
       if (!base.length) return 'На сегодня ещё нет подтверждённого плана. Добавь свои средства, отметь их тип и время по инструкции. После этого кнопка «Составить план из моей библиотеки» покажет черновик, который ты сможешь исправить.';
@@ -103,18 +167,21 @@
       const sequence = today.filter(step => step.time === time);
       return `${time === 'am' ? '☀ Утро' : '☾ Вечер'}\n${sequence.length ? sequence.map((step, index) => `${index + 1}. ${ctx.checks[`${dateKey(date)}:${step.id}`] ? '✓ ' : ''}${step.name}${step.optional ? ' (по желанию)' : ''}`).join('\n') : 'Пока нет шагов.'}`;
     });
-    const unscheduled = ctx.products.filter(product => available.has(product.status) && isActive(product) && !today.some(step => step.productId === product.id));
+    const unscheduled = ctx.products.filter(product => available.has(product.status) && !product.reactionPause?.active && isActive(product) && !today.some(step => step.productId === product.id));
     return `План на ${date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })} из твоей сохранённой рутины:\n${lines.join('\n\n')}${unscheduled.length ? `\n\nАктивные средства без шага сегодня: ${unscheduled.slice(0, 6).map(product => product.name).join(', ')}. Не добавляю их автоматически: сверяй отдельный график и инструкцию.` : ''}\nГалочки в приложении показывают уже выполненное; этот ответ не меняет расписание.`;
   };
   const reply = (query, ctx) => {
     const text = norm(query);
     if (!text) return '';
+    if (/реакц|раздраж|покрасн|жжени|сыпь/.test(text)) return reactionAdvice(ctx);
+    const recent = (ctx.history || []).filter(item => item.role === 'user').slice(-5).some(item => /замен|вместо|аналог|подоб|похож/i.test(item.text || ''));
+    if (/замен|вместо|аналог|подоб|похож/.test(text) || recent && /цвет|оттенок|такой же|близкий|похож|этот|его|ее/.test(text)) return replaceProduct(query, ctx);
     if (/крем|увлажняющ/.test(text) && /подход|лучше|выбрать|сравн|какой/.test(text)) return compareCreams(query, ctx);
     if (/замен|вместо|аналог/.test(text) && /сыворот|serum|бустер/.test(text)) return replaceSerum(query, ctx);
     if (/рутин|план|уход на день|сегодня|утро и вечер|расписание/.test(text)) return todayRoutine(ctx);
     return '';
   };
-  window.CareAdvisor = { reply };
+  window.CareAdvisor = { reply, catalogQuery };
 
   if (document.documentElement.dataset.appMode !== 'friends') return;
   const assistant = document.getElementById('view-assistant');

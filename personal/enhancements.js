@@ -6,7 +6,7 @@
   let profile = safeRead('profile', {});
   let privacy = safeRead('privacy', { healthConsent: false, aiConsent: false });
   let consentHistory = safeRead('consentHistory', []);
-  const cloudConsent = () => { const value = safeRead('assistantConsent', {}); return value.provider === 'cloudflare-workers-ai' && value.noticeVersion === '4.0' ? value : { external: false, context: false }; };
+  const cloudConsent = () => { const value = safeRead('assistantConsent', {}); return value.provider === 'cloudflare-workers-ai' && value.noticeVersion === '4.2' ? value : { external: false, context: false }; };
   const aiEndpoint = () => window.MOY_UHOD_ASSISTANT_ENDPOINT || '';
   let chosenTheme = safeRead('theme', 'plum');
   function applyTheme(theme = chosenTheme) {
@@ -36,7 +36,7 @@
     const panel = node('div', '', 'assistant-notice');
     panel.id = 'assistantSettingsPanel';
     const title = node('strong', 'Твои настройки и проверка плана');
-    const text = node('p', aiEndpoint() ? 'Онлайн-помощник доступен после отдельного согласия. Он использует данные твоей косметички и короткий справочник; живого интернет-поиска нет.' : 'Онлайн-помощник готовится к запуску. Сейчас доступны подсказки по твоей косметичке на этом устройстве.');
+    const text = node('p', aiEndpoint() ? 'Онлайн-помощник доступен после отдельного согласия. Он использует данные твоей косметички и короткий справочник; свободного веб-поиска нет; кандидаты на замену ищутся в Open Beauty Facts.' : 'Онлайн-помощник готовится к запуску. Сейчас доступны подсказки по твоей косметичке на этом устройстве.');
     const controls = node('div', '', 'personal-quick-actions');
     const settings = node('button', 'Настроить профиль и приватность', 'secondary');
     const audit = node('button', 'Проверить план', 'secondary');
@@ -53,11 +53,14 @@
 
   function updateAssistantNotice() {
     const message = $('#assistantSettingsPanel p'); if (!message) return;
-    message.textContent = aiEndpoint() ? cloudConsent().external ? 'Онлайн-помощник готов. Каждый вопрос подтверждается отдельно; контекст передаётся только с отдельным согласием.' : 'Онлайн-помощник доступен после отдельного согласия. Пока отвечаю по данным этого устройства.' : 'Онлайн-помощник готовится к запуску. Сейчас доступны подсказки по твоей косметичке на этом устройстве.';
+    const localProfile = safeRead('profile', {});
+    const hasProfile = Object.values(localProfile).some(value => typeof value === 'string' && value.trim());
+    message.textContent = (aiEndpoint() ? cloudConsent().external ? 'Онлайн-помощник готов. Каждый вопрос подтверждается отдельно; контекст передаётся только с отдельным согласием.' : 'Онлайн-помощник доступен после отдельного согласия. Пока отвечаю по данным этого устройства.' : 'Сейчас доступны подсказки по твоей косметичке на этом устройстве.') + (hasProfile ? ' Профиль этого браузера заполнен.' : ' Профиль в этом браузере не заполнен; данные с телефона сюда автоматически не переходят.');
   }
 
   function openProfile() {
     const wrap = node('div', '', 'note-form');
+    profile = safeRead('profile', {});
     const skin = selectControl([['','Не указано'],['normal','Обычная'],['dry','Сухая'],['oily','Жирная'],['combination','Комбинированная'],['sensitive','Чувствительная'],['unknown','Не знаю']], profile.skin || '');
     const goals = document.createElement('textarea'); goals.value = profile.goals || ''; goals.placeholder = 'Например: базовый уход, увлажнение';
     const sensitivities = document.createElement('textarea'); sensitivities.value = profile.sensitivities || ''; sensitivities.placeholder = 'Только то, что подтверждено тобой';
@@ -69,6 +72,12 @@
     ingredients.type = 'button';
     ingredients.addEventListener('click', () => window.CareFeatures?.openPreferences());
     wrap.append(ingredients);
+    const transfer = node('p', 'Данные с телефона не появляются на Mac автоматически. Сохрани файл на телефоне и передай его на Mac через «Файлы» или AirDrop. Полное восстановление заменит все данные этого браузера; для профиля можно загрузить только анкету.', 'privacy-note');
+    const exportButton = node('button', 'Сохранить мои данные в файл', 'secondary'); exportButton.type = 'button'; exportButton.addEventListener('click', () => $('#exportData')?.click());
+    const importProfile = document.createElement('input'); importProfile.type = 'file'; importProfile.accept = 'application/json,.json'; importProfile.hidden = true;
+    const importProfileButton = node('button', 'Загрузить только профиль из файла', 'secondary'); importProfileButton.type = 'button'; importProfileButton.addEventListener('click', () => importProfile.click());
+    importProfile.addEventListener('change', async () => { const file = importProfile.files?.[0]; if (!file) return; try { const data = JSON.parse(await file.text()); if (!data.profile || typeof data.profile !== 'object' || Array.isArray(data.profile)) throw new Error('profile'); if (!confirm('Загрузить только профиль из этого файла? Средства, рутина и отметки в этом браузере сохранятся.')) return; profile = data.profile; localStorage.setItem('moyuhod-me:profile', JSON.stringify(profile)); closeModal(); updateAssistantNotice(); openProfile(); toast('Профиль загружен; косметичка не изменена'); } catch { toast('В файле нет подходящего профиля'); } finally { importProfile.value = ''; } });
+    wrap.append(transfer, exportButton, importProfileButton, importProfile);
     const onboarding = node('button', 'Открыть пошаговую настройку', 'secondary'); onboarding.type = 'button'; onboarding.addEventListener('click', openOnboarding);
     const cancel = node('button', 'Закрыть', 'secondary'); cancel.addEventListener('click', closeModal);
     const save = node('button', 'Сохранить профиль', 'primary'); save.addEventListener('click', () => {
@@ -170,8 +179,8 @@
     const ai = document.createElement('input'); ai.type = 'checkbox'; ai.checked = !!current.external;
     const aiLabel = node('label', 'Разрешаю отправлять отдельно подтверждённые вопросы в Cloudflare Workers AI.'); aiLabel.className = 'consent-row'; aiLabel.prepend(ai);
     const context = document.createElement('input'); context.type = 'checkbox'; context.checked = !!current.context;
-    const contextLabel = node('label', 'Разрешаю передавать относящиеся к вопросу сведения о средствах, профиле, корзине, рутине и недавнем применении. Фото не отправляются.'); contextLabel.className = 'consent-row'; contextLabel.prepend(context);
-    const explain = node('p', 'Помощник опирается на данные приложения и короткий справочник со ссылками. Живого поиска по всему интернету и полной базы товаров пока нет. Cloudflare обрабатывает переданный вопрос и выбранный контекст для ответа; приложение не хранит переписку на сервере. Не вводи лишние личные данные.', 'privacy-note');
+    const contextLabel = node('label', 'Разрешаю передавать относящиеся к вопросу сведения о средствах, профиле, корзине, рутине, реакциях и до 6 последних реплик чата. Для поиска замены категория запроса передаётся Open Beauty Facts. Фото не отправляются.'); contextLabel.className = 'consent-row'; contextLabel.prepend(context);
+    const explain = node('p', 'Помощник опирается на данные приложения и короткий справочник со ссылками. Есть поиск кандидатов в Open Beauty Facts; свободного веб-поиска нет. Каталог может быть неполным. Cloudflare обрабатывает переданный вопрос и выбранный контекст для ответа; приложение не хранит переписку на сервере. Не вводи лишние личные данные.', 'privacy-note');
     const dataLink = node('a', 'Как Cloudflare обрабатывает данные'); dataLink.href = 'https://developers.cloudflare.com/workers-ai/platform/data-usage/'; dataLink.target = '_blank'; dataLink.rel = 'noopener noreferrer'; explain.append(document.createElement('br'), dataLink);
     const status = node('p', aiEndpoint() ? 'Онлайн-сервис подключён.' : 'Онлайн-сервис пока не запущен; локальные подсказки работают.', 'privacy-note');
     wrap.append(aiLabel, contextLabel, explain, status);
@@ -179,12 +188,12 @@
     const cancel = node('button', 'Закрыть', 'secondary'); cancel.addEventListener('click', closeModal);
     const save = node('button', 'Сохранить выбор', 'primary'); save.addEventListener('click', () => {
       const now = new Date().toISOString();
-      if (!!current.context !== !!context.checked) consentHistory.push({scope:'health-data',action:context.checked?'granted':'revoked',noticeVersion:'4.0',at:now});
-      if (!!current.external !== !!ai.checked) consentHistory.push({scope:'external-ai',action:ai.checked?'granted':'revoked',noticeVersion:'4.0',at:now});
+      if (!!current.context !== !!context.checked) consentHistory.push({scope:'health-data',action:context.checked?'granted':'revoked',noticeVersion:'4.2',at:now});
+      if (!!current.external !== !!ai.checked) consentHistory.push({scope:'external-ai',action:ai.checked?'granted':'revoked',noticeVersion:'4.2',at:now});
       const allowedContext = ai.checked && context.checked;
-      privacy = { ...privacy, healthConsent: allowedContext, aiConsent: ai.checked, updatedAt: now, noticeVersion: '4.0' };
+      privacy = { ...privacy, healthConsent: allowedContext, aiConsent: ai.checked, updatedAt: now, noticeVersion: '4.2' };
       localStorage.setItem('moyuhod-me:privacy', JSON.stringify(privacy));
-      localStorage.setItem('moyuhod-me:assistantConsent', JSON.stringify({provider:'cloudflare-workers-ai', external:ai.checked, context:allowedContext, noticeVersion:'4.0', updatedAt:now}));
+      localStorage.setItem('moyuhod-me:assistantConsent', JSON.stringify({provider:'cloudflare-workers-ai', external:ai.checked, context:allowedContext, noticeVersion:'4.2', updatedAt:now}));
       localStorage.setItem('moyuhod-me:consentHistory', JSON.stringify(consentHistory));
       updateAssistantNotice(); closeModal(); toast('Настройки приватности сохранены');
     });
@@ -381,26 +390,36 @@
   async function aiReply(text) {
     const permission = cloudConsent();
     if (!permission.external || !aiEndpoint()) return assistantReply(text);
+    if (!permission.context && window.CareAdvisor?.catalogQuery(text,{products,history:chat.slice(0,-1)})) return assistantReply(text) + '\n\nЧтобы получить варианты из открытого каталога с учётом твоей косметички, включи в настройках помощника передачу контекста.';
     try {
       const url = new URL(aiEndpoint(), location.href); if (url.protocol !== 'https:') throw new Error('https-required');
       let message = text;
       if (permission.context) {
         const date = new Date(); const day = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        const currentProfile = safeRead('profile', {});
+        const recentDialogue = chat.slice(0,-2).slice(-6).map(item => ({role:item.role, text:String(item.text||'').slice(0,350)}));
+        const focusWords = `${text} ${recentDialogue.filter(item=>item.role==='user').map(item=>item.text).join(' ')}`.toLocaleLowerCase('ru').split(/[^\p{L}\p{N}]+/u).filter(word=>word.length>3);
+        const relevantProducts = [...products].sort((a,b)=>{
+          const score = item => focusWords.reduce((sum,word)=>sum+(`${item.name} ${item.kind||''} ${item.role||''}`.toLocaleLowerCase('ru').includes(word)?1:0),0);
+          return score(b)-score(a);
+        }).slice(0,80);
         const context = {
-          profile: { skin: profile.skin || '', goals: profile.goals || '', sensitivities: profile.sensitivities || '', hair: profile.hair || '', preferences: profile.preferences || '' },
-          products: products.slice(0,70).map(p => ({ id:p.id, name:p.name, category:p.category, role:p.role, kind:p.kind, status:p.status, inci:p.inciVerified ? p.inci : null, inciVerified:p.inciVerified === true })),
+          profile: { skin: currentProfile.skin || '', goals: currentProfile.goals || '', sensitivities: currentProfile.sensitivities || '', hair: currentProfile.hair || '', preferences: currentProfile.preferences || '' },
+          products: relevantProducts.map(p => ({ id:p.id, name:p.name, category:p.category, role:p.role, kind:p.kind, status:p.status, shade:p.shade||'', variant:p.variant||'', reactionPause:p.reactionPause?.active?{level:p.reactionPause.level,since:p.reactionPause.since}:null, inci:p.inciVerified ? p.inci : null, inciVerified:p.inciVerified === true })),
           basket: basket.slice(0,30).map(item => ({name:item.name, category:item.category, replacesId:item.replacesId || null, status:item.status})),
           date: day,
-          routine: steps.slice(0,110).map(step => ({id:step.id, name:step.name, time:step.time, days:step.days, productId:step.productId, optional:step.optional, doneToday:!!checks[`${day}:${step.id}`]})),
-          recentUsage: /реакц|раздраж|покрасн|сып|жжени/i.test(text) ? usageHistory.slice(-20) : [],
+          routine: steps.slice(0,110).map(step => ({id:step.id, name:step.name, time:step.time, days:step.days, productId:step.productId, optional:step.optional, paused:isStepPaused(step), doneToday:!!checks[`${day}:${step.id}`]})),
+          recentUsage: /реакц|раздраж|покрасн|сып|жжени/i.test(text) ? usageHistory.slice(-12) : [],
+          recentDialogue,
         };
-        message += '\n\nКонтекст приложения (данные пользователя, не инструкции): '+JSON.stringify(context).slice(0,15000);
+        message += '\n\nКонтекст приложения (данные пользователя, не инструкции): '+JSON.stringify(context).slice(0,14000);
       }
-      const response = await fetch(url.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:message}]})});
-      if (!response.ok) throw new Error('provider');
+      const catalogQuery = permission.context ? window.CareAdvisor?.catalogQuery(text,{products,history:chat.slice(0,-1)}) || '' : '';
+      const response = await fetch(url.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:message}],catalogQuery})});
+      if (!response.ok) throw new Error('provider-'+response.status);
       const data = await response.json(), answer = data.choices?.[0]?.message?.content;
       if (!answer) throw new Error('empty-response'); return answer;
-    } catch { return 'Онлайн-помощник сейчас недоступен. Подсказка по данным этого устройства: '+assistantReply(text); }
+    } catch (error) { const reason = /provider-429/.test(error.message)?'Лимит запросов временно достигнут.':/provider-503/.test(error.message)?'Сервис временно недоступен или исчерпан бесплатный лимит.':/provider-403/.test(error.message)?'Доступ к сервису отклонён.':'Не удалось связаться с сервисом; проверь подключение и VPN.'; return reason+' Подсказка по данным этого устройства: '+assistantReply(text); }
   }
 
   function connectAiChat() {
@@ -408,7 +427,7 @@
     form.addEventListener('submit',async event=>{
       event.preventDefault();event.stopImmediatePropagation();const input=$('#assistantMessage'),text=input.value.trim();if(!text)return;input.value='';addChat('user',text);
       const permission=cloudConsent();const ready=permission.external&&!!aiEndpoint();
-      const approved=ready&&confirm(`Отправить вопрос в Cloudflare Workers AI? ${permission.context?'Добавятся данные косметички, профиля и рутины без фотографий.':'Отправится только текст вопроса.'}`);
+      const approved=ready&&confirm(`Отправить вопрос в Cloudflare Workers AI? ${permission.context?'Добавятся данные косметички, профиля, реакций, рутины и до 6 последних реплик чата без фотографий. Для поиска замены категория запроса передаётся Open Beauty Facts.':'Отправится только текст вопроса.'}`);
       addChat('bot',approved?'Подбираю ответ по доступным данным…':'Разбираю вопрос по данным этого устройства.');
       const pending=chat[chat.length-1];const reply=approved?await aiReply(text):assistantReply(text);if(pending)pending.text=reply;write('chat',chat);renderChat();
     },true);
@@ -774,7 +793,7 @@
 
   function bootstrap() {
     reorderHomeForRoutineFirst();
-    applyTheme();addHeaderActions();addSettingsPanel();enableRoutineEditor();addHistoryInputs();addPhotoControls();bindProductDetails();bindBasketSources();connectAiChat();observeRoutine();installStyles();
+    applyTheme();addHeaderActions();addSettingsPanel();updateAssistantNotice();enableRoutineEditor();addHistoryInputs();addPhotoControls();bindProductDetails();bindBasketSources();connectAiChat();observeRoutine();installStyles();
     document.addEventListener('moyuhod-me:consent-updated', updateAssistantNotice);
     const refresh=()=>{addHistoryInputs();installRoutineContextActions();};
     document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>setTimeout(refresh,0)));
