@@ -106,27 +106,36 @@
     if (!overlay.hidden) open();
     systemNotify(item);
   }
-  function scheduledSteps(day, period) {
+  function scheduledSteps(day, period, adjustment = null) {
     const weekday = day.getDay();
+    const dayKey = dateKey(day);
     const products = read('products', []);
-    return read('steps', []).filter(step => step.time === period && (!step.days?.length || step.days.includes(weekday)) && !step.optional &&
+    const moved = adjustment?.assignments?.filter(item => item.sourceDate === dayKey).map(item => item.step.id) || [];
+    const vitaminMisses = adjustment?.vitamins?.filter(item => item.sourceDate === dayKey).map(item => item.step.id) || [];
+    const list = read('steps', []).filter(step => step.time === period && (!step.days?.length || step.days.includes(weekday)) && !step.optional &&
+      !moved.includes(step.id) && !vitaminMisses.includes(step.id) &&
       (!step.productId || products.some(product => product.id === step.productId && isOwned(product) && !product.reactionPause?.active)) &&
       !(step.productIds?.length && step.productIds.every(id => !products.some(product => product.id === id && isOwned(product) && !product.reactionPause?.active))));
+    if (dayKey === dateKey(new Date())) for (const item of adjustment?.assignments || []) {
+      if (item.targetDate === dayKey && item.step.time === period && !list.some(step => step.id === item.step.id)) list.push(item.step);
+    }
+    return list;
   }
   function evaluate() {
     settings = { ...defaults, ...read('notificationSettings', {}) };
     if (!settings.planned && !settings.missed && !settings.lowStock) return;
     const now = new Date(), today = dateKey(now), minute = now.toTimeString().slice(0, 5);
     const checks = read('checks', {});
+    const adjustment = typeof getAccentScheduleAdjustments === 'function' ? getAccentScheduleAdjustments() : null;
     if (settings.planned) for (const [period, time, label] of [['am', settings.morning, 'утро'], ['pm', settings.evening, 'вечер']]) {
       if (minute < time) continue;
-      const remaining = scheduledSteps(now, period).filter(step => !checks[`${today}:${step.id}`]);
+      const remaining = scheduledSteps(now, period, adjustment).filter(step => !checks[`${today}:${step.id}`]);
       if (remaining.length) deliver(`planned:${today}:${period}`, `Уход на ${label}`, `${remaining.length} ${remaining.length === 1 ? 'шаг ждёт' : 'шагов ждут'} отметки в плане.`);
     }
     if (settings.missed && minute >= settings.morning) {
       const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayKey = dateKey(yesterday);
-      const missed = ['am','pm'].flatMap(period => scheduledSteps(yesterday, period)).filter(step => !checks[`${yesterdayKey}:${step.id}`]);
+      const missed = ['am','pm'].flatMap(period => scheduledSteps(yesterday, period, adjustment)).filter(step => !checks[`${yesterdayKey}:${step.id}`]);
       if (missed.length) deliver(`missed:${yesterdayKey}`, 'Вчерашний уход', `${missed.length} обязательных шагов без отметки. Проверь план: выполненное можно отметить за вчера.`);
     }
     if (settings.lowStock && minute >= settings.morning) {
